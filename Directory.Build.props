@@ -1,0 +1,10 @@
+﻿<Project>
+  <PropertyGroup>
+    <RepoPath>$(MSBuildThisFileDirectory)</RepoPath>
+    <RepoSrcPath>$(RepoPath)src\</RepoSrcPath>
+    <RepoOutPath>$(RepoPath)out\</RepoOutPath>
+    <ProjectOutPath>$(RepoOutPath)$(MSBuildProjectName)\</ProjectOutPath>
+    <BaseOutputPath>$(ProjectOutPath)bin\</BaseOutputPath>
+    <BaseIntermediateOutputPath>$(ProjectOutPath)obj\</BaseIntermediateOutputPath>
+  </PropertyGroup>
+</Project>
