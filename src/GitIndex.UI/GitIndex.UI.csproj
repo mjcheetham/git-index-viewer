@@ -3,7 +3,7 @@
     <OutputType>WinExe</OutputType>
     <TargetFramework>netcoreapp3.0</TargetFramework>
     <RootNamespace>Mjcheetham.Git.IndexViewer.UI</RootNamespace>
-    <AssemblyName>git-idx-view</AssemblyName>
+    <AssemblyName>git-index-ui</AssemblyName>
   </PropertyGroup>
   <ItemGroup>
     <Folder Include="Models\" />

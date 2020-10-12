@@ -11,6 +11,11 @@ namespace Mjcheetham.Git.IndexViewer
             Bytes = bytes;
         }
 
+        public string ToString(int len)
+        {
+            return ToString().Substring(0, len);
+        }
+
         public override string ToString()
         {
             return BitConverter.ToString(Bytes)
