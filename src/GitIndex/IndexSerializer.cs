@@ -25,10 +25,12 @@ namespace Mjcheetham.Git.IndexViewer
             using var reader = new BigEndianBinaryReader(stream, Encoding.UTF8, true);
             index.Header = ReadHeader(reader);
 
+            string prevPath = null;
             for (int i = 0; i < index.Header.EntryCount; i++)
             {
-                IndexEntry entry = ReadEntry(reader, index.Header.Version);
+                IndexEntry entry = ReadEntry(reader, index.Header.Version, prevPath);
                 index.Entries.Add(entry);
+                prevPath = entry.Path;
             }
 
             index.Extensions = ReadExtensions(reader);
@@ -73,7 +75,7 @@ namespace Mjcheetham.Git.IndexViewer
             };
         }
 
-        private static IndexEntry ReadEntry(BigEndianBinaryReader reader, uint version)
+        private static IndexEntry ReadEntry(BigEndianBinaryReader reader, uint version, string prevPath)
         {
             int entryLength = BaseEntryLength;
 
@@ -102,7 +104,7 @@ namespace Mjcheetham.Git.IndexViewer
             };
 
             // Read extended flags
-            if (isExtended)
+            if (version > 2 && isExtended)
             {
                 ushort extendedFlags = reader.ReadUInt16();
                 entry.SkipWorktree = (extendedFlags & SkipWorktreeExFlag) != 0;
@@ -111,11 +113,14 @@ namespace Mjcheetham.Git.IndexViewer
             }
 
             // Read path
-            entry.Path = ReadPath(reader, version, pathLength);
+            entry.Path = ReadPath(reader, version, pathLength, prevPath ?? string.Empty);
 
-            // Consume remaining null bytes
-            int nullBytes = 8 - (entryLength % 8);
-            reader.ReadBytes(nullBytes);
+            if (version < 4)
+            {
+                // Consume remaining null bytes
+                int nullBytes = 8 - (entryLength % 8);
+                reader.ReadBytes(nullBytes);
+            }
 
             return entry;
         }
@@ -146,11 +151,43 @@ namespace Mjcheetham.Git.IndexViewer
             };
         }
 
-        private static string ReadPath(BigEndianBinaryReader reader, in uint version, in int pathLength)
+        private static string ReadPath(BigEndianBinaryReader reader, in uint version, in int pathLength, in string prevPath)
         {
-            // TODO: support version 4
+            if (version > 3)
+            {
+                int replaceLength = ReadPathReplaceLength(reader);
+
+                var path = new StringBuilder(pathLength);
+
+                // Copy the common prefix from the previous path
+                int prefixLength = prevPath.Length - replaceLength;
+                string prefix = prevPath.Substring(0, prefixLength);
+                path.Append(prefix);
+
+                // Append the rest of the current path
+                char c;
+                while ((c = reader.ReadChar()) != '\0') path.Append(c);
+
+                return path.ToString();
+            }
+
             byte[] pathBytes = reader.ReadBytes(pathLength);
             return Encoding.UTF8.GetString(pathBytes);
+        }
+
+        private static int ReadPathReplaceLength(BigEndianBinaryReader reader)
+        {
+            int headerByte = reader.ReadByte();
+            int offset = headerByte & 0x7F;
+
+            for (int i = 0; (headerByte & 0x80) != 0; i++)
+            {
+                headerByte = reader.ReadByte();
+                offset += 1;
+                offset = (offset << 7) + (headerByte & 0x7F);
+            }
+
+            return offset;
         }
 
         private static byte[] ReadExtensions(BigEndianBinaryReader reader)
