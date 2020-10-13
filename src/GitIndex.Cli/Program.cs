@@ -157,17 +157,20 @@ namespace Mjcheetham.Git.IndexViewer.Cli
                 maxSize = Math.Max(entry.Status.Size, maxSize);
             }
 
-            int maxUserLen;
-            int maxGroupLen;
-            if (options.NumericUidGid)
+            int maxUserLen = 1;
+            int maxGroupLen = 1;
+            if (entries.Count > 0)
             {
-                maxUserLen = uids.Max().ToString().Length;
-                maxGroupLen = gids.Max().ToString().Length;
-            }
-            else
-            {
-                maxUserLen = uids.Select(GetUserName).Max(x => x.Length);
-                maxGroupLen = gids.Select(GetGroupName).Max(x => x.Length);
+                if (options.NumericUidGid)
+                {
+                    maxUserLen = uids.Max().ToString().Length;
+                    maxGroupLen = gids.Max().ToString().Length;
+                }
+                else
+                {
+                    maxUserLen = uids.Select(GetUserName).Max(x => x.Length);
+                    maxGroupLen = gids.Select(GetGroupName).Max(x => x.Length);
+                }
             }
 
             int maxSizeLen = maxSize.ToString().Length;
