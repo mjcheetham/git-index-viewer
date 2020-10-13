@@ -15,9 +15,9 @@ namespace Mjcheetham.Git.IndexViewer.Cli
         {
             var rootCommand = new RootCommand("Utility for inspecting the Git index file.")
             {
-                new Option<string>(new[] {"-i", "--index-file"})
+                new Option<string>(new[] {"-f", "--file"})
                 {
-                    Description = "Path to a Git repository or .git/index file",
+                    Description = "Path to a .git/index file",
                 }
             };
 
@@ -48,45 +48,36 @@ namespace Mjcheetham.Git.IndexViewer.Cli
 
         private abstract class CommandOptions
         {
-            private string IndexFile { get; set; }
+            private string File { get; set; }
 
-            public string GetIndexFile() => TryGetIndexFile(out string p) ? p : null;
-
-            private bool TryGetIndexFile(out string filePath)
+            public string IndexFile
             {
-                filePath = string.IsNullOrWhiteSpace(IndexFile)
-                    ? Directory.GetCurrentDirectory()
-                    : Path.GetFullPath(IndexFile);
-
-                string fileName = Path.GetFileName(filePath);
-
-                if (!StringComparer.Ordinal.Equals(fileName, "index"))
+                get
                 {
-                    string p = Path.Combine(filePath, "index");
-                    if (File.Exists(p))
+                    if (!string.IsNullOrWhiteSpace(File))
                     {
-                        filePath = p;
-                        return true;
+                        return Path.GetFullPath(File);
                     }
 
-                    p = Path.Combine(filePath, ".git", "index");
-                    if (File.Exists(p))
+                    string dir = Directory.GetCurrentDirectory();
+                    while (!string.IsNullOrWhiteSpace(dir))
                     {
-                        filePath = p;
-                        return true;
-                    }
-                }
-                else if (File.Exists(filePath))
-                {
-                    return true;
-                }
+                        string path = Path.Combine(dir, ".git", "index");
+                        if (System.IO.File.Exists(path))
+                        {
+                            return path;
+                        }
 
-                return false;
+                        dir = Path.GetDirectoryName(dir);
+                    }
+
+                    return null;
+                }
             }
 
             public virtual bool Validate()
             {
-                if (!TryGetIndexFile(out _))
+                if (IndexFile != null && !System.IO.File.Exists(IndexFile))
                 {
                     Console.Error.WriteLine("error: unable to locate index file.");
                     return false;
@@ -123,8 +114,8 @@ namespace Mjcheetham.Git.IndexViewer.Cli
         {
             if (!options.Validate()) return 1;
 
-            Index index = IndexSerializer.Deserialize(options.GetIndexFile());
-            PrintSummary(index, options.GetIndexFile());
+            Index index = IndexSerializer.Deserialize(options.IndexFile);
+            PrintSummary(index, options.IndexFile);
             return 0;
         }
 
@@ -132,7 +123,7 @@ namespace Mjcheetham.Git.IndexViewer.Cli
         {
             if (!options.Validate()) return 1;
 
-            Index index = IndexSerializer.Deserialize(options.GetIndexFile());
+            Index index = IndexSerializer.Deserialize(options.IndexFile);
 
             // Apply entry filters
             IEnumerable<IndexEntry> entriesQuery = index.Entries;
