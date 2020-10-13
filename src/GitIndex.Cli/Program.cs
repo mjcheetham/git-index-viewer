@@ -31,51 +31,128 @@ namespace Mjcheetham.Git.IndexViewer.Cli
                 },
                 new Option<bool>("--ignore-case", "Perform case-insensitive filtering on paths"),
                 new Option<bool>(new[]{"-U", "--ctime"}, "Use time of file creation, instead of last modification"),
-                new Option<bool>(new[]{"-n", "--numeric-uid-gid"}, "Use numeric user and group IDs")
+                new Option<bool>(new[]{"-n", "--numeric-uid-gid"}, "Use numeric user and group IDs"),
+                new Option<bool>(new[]{"-S", "--skip-worktree"}, "Show only entries with the skip-worktree bit set"),
+                new Option<bool>(new[]{"-s", "--no-skip-worktree"}, "Do not show entries with the skip-worktree bit set")
             };
 
             rootCommand.Add(infoCommand);
             rootCommand.Add(listCommand);
 
-            infoCommand.Handler = CommandHandler.Create<string>(Info);
-            listCommand.Handler = CommandHandler.Create<string, string, bool, bool, bool>(List);
+            infoCommand.Handler = CommandHandler.Create<InfoOptions>(Info);
+            listCommand.Handler = CommandHandler.Create<ListOptions>(List);
 
             int exitCode = rootCommand.Invoke(args);
             Environment.Exit(exitCode);
         }
 
-        private static int Info(string indexFile)
+        private abstract class CommandOptions
         {
-            if (!TryGetIndexFile(indexFile, out string filePath))
+            private string IndexFile { get; set; }
+
+            public string GetIndexFile() => TryGetIndexFile(out string p) ? p : null;
+
+            private bool TryGetIndexFile(out string filePath)
             {
-                Console.Error.WriteLine("Unable to locate index file.");
-                return 1;
+                filePath = string.IsNullOrWhiteSpace(IndexFile)
+                    ? Directory.GetCurrentDirectory()
+                    : Path.GetFullPath(IndexFile);
+
+                string fileName = Path.GetFileName(filePath);
+
+                if (!StringComparer.Ordinal.Equals(fileName, "index"))
+                {
+                    string p = Path.Combine(filePath, "index");
+                    if (File.Exists(p))
+                    {
+                        filePath = p;
+                        return true;
+                    }
+
+                    p = Path.Combine(filePath, ".git", "index");
+                    if (File.Exists(p))
+                    {
+                        filePath = p;
+                        return true;
+                    }
+                }
+                else if (File.Exists(filePath))
+                {
+                    return true;
+                }
+
+                return false;
             }
 
-            Index index = IndexSerializer.Deserialize(filePath);
-            PrintSummary(index, filePath);
+            public virtual bool Validate()
+            {
+                if (!TryGetIndexFile(out _))
+                {
+                    Console.Error.WriteLine("error: unable to locate index file.");
+                    return false;
+                }
+
+                return true;
+            }
+        }
+
+        private class InfoOptions : CommandOptions { }
+
+        private class ListOptions : CommandOptions
+        {
+            public string Path { get; set; }
+            public bool IgnoreCase { get; set; }
+            public bool CTime { get; set; }
+            public bool NumericUidGid { get; set; }
+            public bool SkipWorktree { get; set; }
+            public bool NoSkipWorktree { get; set; }
+
+            public override bool Validate()
+            {
+                if (SkipWorktree && NoSkipWorktree)
+                {
+                    Console.Error.WriteLine("error: cannot specify --skip-worktree and --no-skip-worktree at the same time.");
+                    return false;
+                }
+
+                return base.Validate();
+            }
+        }
+
+        private static int Info(InfoOptions options)
+        {
+            if (!options.Validate()) return 1;
+
+            Index index = IndexSerializer.Deserialize(options.GetIndexFile());
+            PrintSummary(index, options.GetIndexFile());
             return 0;
         }
 
-        private static int List(string indexFile, string path, bool ignoreCase, bool ctime, bool numericUidGid)
+        private static int List(ListOptions options)
         {
-            if (!TryGetIndexFile(indexFile, out string filePath))
+            if (!options.Validate()) return 1;
+
+            Index index = IndexSerializer.Deserialize(options.GetIndexFile());
+
+            // Apply entry filters
+            IEnumerable<IndexEntry> entriesQuery = index.Entries;
+            if (!string.IsNullOrWhiteSpace(options.Path))
             {
-                Console.Error.WriteLine("Unable to locate index file.");
-                return 1;
+                entriesQuery = entriesQuery.Where(
+                    x => x.Path.StartsWith(options.Path, options.IgnoreCase, CultureInfo.InvariantCulture)
+                );
             }
 
-            Index index = IndexSerializer.Deserialize(filePath);
-
-            // Apply entry filter
-            IList<IndexEntry> entries = index.Entries;
-            if (!string.IsNullOrWhiteSpace(path))
+            if (options.SkipWorktree)
             {
-                entries = index.Entries.Where(
-                        x => x.Path.StartsWith(path, ignoreCase, CultureInfo.InvariantCulture)
-                    )
-                    .ToList();
+                entriesQuery = entriesQuery.Where(x => x.SkipWorktree);
             }
+            else if (options.NoSkipWorktree)
+            {
+                entriesQuery = entriesQuery.Where(x => !x.SkipWorktree);
+            }
+
+            IList<IndexEntry> entries = entriesQuery.ToList();
 
             // Compute column widths
             int maxWidth = Math.Max(Console.WindowWidth, 120);
@@ -91,7 +168,7 @@ namespace Mjcheetham.Git.IndexViewer.Cli
 
             int maxUserLen;
             int maxGroupLen;
-            if (numericUidGid)
+            if (options.NumericUidGid)
             {
                 maxUserLen = uids.Max().ToString().Length;
                 maxGroupLen = gids.Max().ToString().Length;
@@ -113,42 +190,10 @@ namespace Mjcheetham.Git.IndexViewer.Cli
             // Print entries
             foreach (IndexEntry entry in entries)
             {
-                PrintEntry(entry, columnFormat, ctime, numericUidGid, maxWidth);
+                PrintEntry(entry, columnFormat, options.CTime, options.NumericUidGid, maxWidth);
             }
 
             return 0;
-        }
-
-        private static bool TryGetIndexFile(string arg, out string filePath)
-        {
-            filePath = string.IsNullOrWhiteSpace(arg)
-                ? Directory.GetCurrentDirectory()
-                : Path.GetFullPath(arg);
-
-            string fileName = Path.GetFileName(filePath);
-
-            if (!StringComparer.Ordinal.Equals(fileName, "index"))
-            {
-                string p = Path.Combine(filePath, "index");
-                if (File.Exists(p))
-                {
-                    filePath = p;
-                    return true;
-                }
-
-                p = Path.Combine(filePath, ".git", "index");
-                if (File.Exists(p))
-                {
-                    filePath = p;
-                    return true;
-                }
-            }
-            else if (File.Exists(filePath))
-            {
-                return true;
-            }
-
-            return false;
         }
 
         private static void PrintSummary(Index index, string filePath)
