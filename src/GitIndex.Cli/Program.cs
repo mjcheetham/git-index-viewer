@@ -192,11 +192,17 @@ namespace Mjcheetham.Git.IndexViewer.Cli
 
         private static void PrintSummary(Index index, string filePath)
         {
+            int skipWorktreeCount = index.Entries.Count(x => x.SkipWorktree);
+
             var fi = new FileInfo(filePath);
             Console.WriteLine("File       : {0}", filePath);
             Console.WriteLine("Size       : {0} bytes", fi.Length);
             Console.WriteLine("Version    : {0}", index.Header.Version);
             Console.WriteLine("Entries    : {0}", index.Header.EntryCount);
+            if (skipWorktreeCount > 0)
+            {
+                Console.WriteLine("  Skip-wt  : {0}", skipWorktreeCount);
+            }
             Console.WriteLine("Checksum   : {0}", index.Checksum);
             Console.WriteLine("Extensions : {0} bytes", index.Extensions.Length);
         }
