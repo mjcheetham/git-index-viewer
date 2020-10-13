@@ -13,7 +13,7 @@ namespace Mjcheetham.Git.IndexViewer
 
         public string ToString(int len)
         {
-            return ToString().Substring(0, len);
+            return ToString().Truncate(len);
         }
 
         public override string ToString()

@@ -5,6 +5,7 @@ using System.CommandLine;
 using System.CommandLine.Invocation;
 using System.Globalization;
 using System.Linq;
+using System.Runtime.InteropServices;
 
 namespace Mjcheetham.Git.IndexViewer.Cli
 {
@@ -14,7 +15,7 @@ namespace Mjcheetham.Git.IndexViewer.Cli
         {
             var rootCommand = new RootCommand("Utility for inspecting the Git index file.")
             {
-                new Option<string>(new[] {"-i", "--index"})
+                new Option<string>(new[] {"-i", "--index-file"})
                 {
                     Description = "Path to a Git repository or .git/index file",
                 }
@@ -29,14 +30,15 @@ namespace Mjcheetham.Git.IndexViewer.Cli
                     Arity = ArgumentArity.ZeroOrOne
                 },
                 new Option<bool>("--ignore-case", "Perform case-insensitive filtering on paths"),
-                new Option<bool>("--no-table", "Do not show table headings or columns"),
+                new Option<bool>(new[]{"-U", "--ctime"}, "Use time of file creation, instead of last modification"),
+                new Option<bool>(new[]{"-n", "--numeric-uid-gid"}, "Use numeric user and group IDs")
             };
 
             rootCommand.Add(infoCommand);
             rootCommand.Add(listCommand);
 
             infoCommand.Handler = CommandHandler.Create<string>(Info);
-            listCommand.Handler = CommandHandler.Create<string, string, bool, bool>(List);
+            listCommand.Handler = CommandHandler.Create<string, string, bool, bool, bool>(List);
 
             int exitCode = rootCommand.Invoke(args);
             Environment.Exit(exitCode);
@@ -55,7 +57,7 @@ namespace Mjcheetham.Git.IndexViewer.Cli
             return 0;
         }
 
-        private static int List(string indexFile, string path, bool ignoreCase, bool noTable)
+        private static int List(string indexFile, string path, bool ignoreCase, bool ctime, bool numericUidGid)
         {
             if (!TryGetIndexFile(indexFile, out string filePath))
             {
@@ -65,28 +67,53 @@ namespace Mjcheetham.Git.IndexViewer.Cli
 
             Index index = IndexSerializer.Deserialize(filePath);
 
-            int consoleWidth = Math.Max(Console.WindowWidth, 120);
-
-            const string PathColHeader = "Path";
-            const string OtherColHeaders = " | Mode       | OID          | SkipWT | Add   | Stage          ";
-
-            int pathExtraWidth = consoleWidth - OtherColHeaders.Length - PathColHeader.Length;
-
-            if (!noTable)
-            {
-                Console.WriteLine("{0}{1}{2}", PathColHeader, new string(' ', pathExtraWidth), OtherColHeaders);
-                Console.WriteLine(new string('-', consoleWidth));
-            }
-
-            IEnumerable<IndexEntry> entries = index.Entries;
+            // Apply entry filter
+            IList<IndexEntry> entries = index.Entries;
             if (!string.IsNullOrWhiteSpace(path))
             {
-                entries = index.Entries.Where(x => x.Path.StartsWith(path, ignoreCase, CultureInfo.InvariantCulture));
+                entries = index.Entries.Where(
+                        x => x.Path.StartsWith(path, ignoreCase, CultureInfo.InvariantCulture)
+                    )
+                    .ToList();
             }
 
+            // Compute column widths
+            int maxWidth = Math.Max(Console.WindowWidth, 120);
+            ISet<uint> uids = new HashSet<uint>();
+            ISet<uint> gids = new HashSet<uint>();
+            long maxSize = 0;
             foreach (IndexEntry entry in entries)
             {
-                PrintEntry(entry, consoleWidth - OtherColHeaders.Length, noTable);
+                uids.Add(entry.Status.UserId);
+                gids.Add(entry.Status.GroupId);
+                maxSize = Math.Max(entry.Status.Size, maxSize);
+            }
+
+            int maxUserLen;
+            int maxGroupLen;
+            if (numericUidGid)
+            {
+                maxUserLen = uids.Max().ToString().Length;
+                maxGroupLen = gids.Max().ToString().Length;
+            }
+            else
+            {
+                maxUserLen = uids.Select(GetUserName).Max(x => x.Length);
+                maxGroupLen = gids.Select(GetGroupName).Max(x => x.Length);
+            }
+
+            int maxSizeLen = maxSize.ToString().Length;
+            string columnFormat = "{0} {1} {2} " +
+                                    $"{{3,-{maxUserLen}}} {{4,-{maxGroupLen}}} {{5,{maxSizeLen}}} " +
+                                    "{6,2} {7:MMM} {7:HH:mm} {8} ";
+
+            // Print count
+            Console.WriteLine("total {0}", entries.Count);
+
+            // Print entries
+            foreach (IndexEntry entry in entries)
+            {
+                PrintEntry(entry, columnFormat, ctime, numericUidGid, maxWidth);
             }
 
             return 0;
@@ -135,20 +162,54 @@ namespace Mjcheetham.Git.IndexViewer.Cli
             Console.WriteLine("Extensions : {0} bytes", index.Extensions.Length);
         }
 
-        private static void PrintEntry(IndexEntry entry, int maxPath, bool noTable)
+        private static void PrintEntry(IndexEntry entry, string columnFormat, bool ctime, bool numericId, int maxWidth)
         {
-            char colDividerChar = noTable ? ' ' : '|';
-            string formatString = $"{{1,-{maxPath}}} {{0}} {{2,-10}} {{0}} {{3,-12}} {{0}} {{4,-6}} {{0}} {{5,-5}} {{0}} {{6}}";
-            string path = TruncatePath(entry.Path, maxPath);
+            string mode = entry.Status.Mode.ToString();
+            var flagsArr = new[] {'-', '-', '-'};
+            if (entry.IntentToAdd)  flagsArr[0] = 'a';
+            if (entry.SkipWorktree) flagsArr[1] = 's';
+            if (entry.AssumeValid)  flagsArr[2] = 'v';
+            var flags = new string(flagsArr);
 
-            Console.WriteLine(formatString, colDividerChar,
-                path, entry.Status.Mode, entry.ObjectId.ToString(12), entry.SkipWorktree, entry.IntentToAdd, entry.Stage);
+            string oid = entry.ObjectId.ToString(8);
+            string user = numericId ? entry.Status.UserId.ToString() : GetUserName(entry.Status.UserId);
+            string group = numericId ? entry.Status.GroupId.ToString() : GetGroupName(entry.Status.GroupId);
+            uint size = entry.Status.Size;
+            DateTime time = (DateTime) (ctime ? entry.Status.CreationTime : entry.Status.ModifiedTime);
+            int stage = (int)entry.Stage;
+
+            string otherCol = string.Format(columnFormat, mode, flags, oid, user, group, size, time.Day, time, stage);
+            string path = TruncatePath(entry.Path, maxWidth - otherCol.Length);
+            Console.Write(otherCol);
+            Console.WriteLine(path);
         }
 
         private static string TruncatePath(string path, int max)
         {
             if (path.Length <= max) return path;
             return "..." + path.Substring(path.Length - max + 3);
+        }
+
+        private static string GetUserName(uint uid)
+        {
+            if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+            {
+                return UnixNative.GetUserName(uid);
+            }
+
+            // TODO: support Windows
+            return uid.ToString();
+        }
+
+        private static string GetGroupName(uint gid)
+        {
+            if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+            {
+                return UnixNative.GetGroupName(gid);
+            }
+
+            // TODO: support Windows
+            return gid.ToString();
         }
     }
 }

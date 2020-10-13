@@ -52,7 +52,7 @@ namespace Mjcheetham.Git.IndexViewer
     {
         NoConflicts = 0,
         CommonAncestor = 1,
-        Yours = 2,
+        Ours = 2,
         Theirs = 3
     }
 }
